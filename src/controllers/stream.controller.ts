@@ -7,6 +7,7 @@ import {
   getActiveChannel,
   setActiveChannel,
   updateLastRequestAt,
+  updateChannelStatus,
 } from "../services/active-channel-registry.service";
 import {
   getChannelPlaylistPath,
@@ -99,11 +100,15 @@ export async function streamController(req: Request, res: Response) {
     const ready = await waitForPlaylist(playlistPath, 15000, 500);
 
     if (!ready) {
+      updateChannelStatus(channelId, "error");
+
       return res.status(504).json({
         ok: false,
         message: "Timeout generando HLS",
       });
     }
+
+    updateChannelStatus(channelId, "running");
 
     return res.redirect(getChannelPublicPlaylistUrl(channelId));
   } catch (error) {

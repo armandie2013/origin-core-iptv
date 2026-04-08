@@ -32,3 +32,12 @@ export function updateLastRequestAt(channelId: string) {
 export function getAllActiveChannels() {
   return Array.from(activeChannels.values());
 }
+
+export function updateChannelStatus(
+  channelId: string,
+  status: "starting" | "running" | "error"
+) {
+  const channel = activeChannels.get(channelId);
+  if (!channel) return;
+  channel.status = status;
+}
