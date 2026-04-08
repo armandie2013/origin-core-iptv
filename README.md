@@ -1,29 +1,30 @@
-# origin-core-iptv
 # 🎥 Origin Core IPTV
 
 Servidor **Origin** para sistema IPTV distribuido.
 
 Este servicio se encarga de:
 
-* Resolver canales desde la base central
-* Seleccionar la mejor calidad del stream (HLS)
-* Generar HLS local mediante FFmpeg
+* Obtener canales desde la base central
+* Resolver automáticamente la mejor calidad del stream (HLS)
+* Generar HLS local con FFmpeg
 * Servir streams a clientes o nodos Edge
+* Administrar canales activos en tiempo real
+* Exponer panel técnico local
 
 ---
 
 # 🧠 Arquitectura
 
 ```text
-[ Backend Central ] (10.254.1.10)
+[ Backend IPTV ] (Mongo + API)
         ↓
-   MongoDB (canales + usuarios)
-        ↓
-[ Origin ] (10.254.1.11)
+[ Origin ]  ← (este proyecto)
         ↓
    HLS local (/hls)
         ↓
-[ Edge (futuro) ] → Clientes (App / VLC / Web)
+[ Edge (futuro) ]
+        ↓
+[ Clientes (App / VLC / Web) ]
 ```
 
 ---
@@ -32,9 +33,7 @@ Este servicio se encarga de:
 
 ## 1. Node.js
 
-* Recomendado: **v18+**
-
-Verificar:
+* Recomendado: **v18 o superior**
 
 ```bash
 node -v
@@ -44,7 +43,7 @@ node -v
 
 ## 2. FFmpeg
 
-### Windows (recomendado)
+### Windows
 
 ```powershell
 winget install --id Gyan.FFmpeg -e
@@ -60,7 +59,7 @@ ffmpeg -version
 
 ## 3. MongoDB
 
-Debe existir una base accesible desde el Origin con los canales cargados.
+Debe existir una base con los canales.
 
 Ejemplo:
 
@@ -72,16 +71,9 @@ MONGO_URI=mongodb://10.254.1.10:27017/nombre_db
 
 # 📦 Instalación
 
-Clonar repo:
-
 ```bash
 git clone <repo-url>
 cd origin-core-iptv
-```
-
-Instalar dependencias:
-
-```bash
 npm install
 ```
 
@@ -89,44 +81,37 @@ npm install
 
 # 🔐 Configuración
 
-Crear archivo `.env` en la raíz:
+Crear archivo `.env`:
 
 ```env
-# Puerto del servicio
 PORT=4001
 
-# Identidad del nodo
 NODE_KEY=origin-central
 NODE_TYPE=origin
 NODE_NAME=Origin Central
 
-# URL pública del origin
 PUBLIC_BASE_URL=http://192.168.10.27:4001
 
-# Base de datos (backend central)
 MONGO_URI=mongodb://10.254.1.10:27017/nombre_db
 
-# Ruta HLS local
 HLS_ROOT=./storage/hls
 
-# Ruta FFmpeg (Windows usar ruta completa si falla)
 FFMPEG_PATH=ffmpeg
 
-# Timeout canales
-CHANNEL_IDLE_TIMEOUT_MS=120000
+CHANNEL_IDLE_TIMEOUT_MS=0
 ```
 
 ---
 
 # 🚀 Ejecución
 
-Modo desarrollo:
+## Desarrollo
 
 ```bash
 npm run dev
 ```
 
-Modo producción:
+## Producción
 
 ```bash
 npm run build
@@ -135,43 +120,29 @@ npm start
 
 ---
 
-# 🔍 Endpoints
+# 📡 Endpoints
 
-## Health check
+## 🔍 Health
 
 ```http
 GET /health
 ```
 
-Respuesta:
-
-```json
-{
-  "ok": true,
-  "service": "origin"
-}
-```
-
 ---
 
-## Reproducir canal
+## ▶️ Stream
 
 ```http
 GET /stream/:channelId
 ```
 
-Ejemplo:
-
-```http
-GET /stream/69d1063821d24bf44cb9b8a3
-```
-
 ### Flujo:
 
-1. Busca canal en Mongo
-2. Resuelve mejor calidad del HLS
-3. Inicia FFmpeg si no está activo
-4. Redirige a:
+* busca canal en Mongo
+* resuelve mejor calidad HLS
+* inicia FFmpeg
+* genera HLS
+* redirige a:
 
 ```http
 /hls/:channelId/index.m3u8
@@ -179,76 +150,163 @@ GET /stream/69d1063821d24bf44cb9b8a3
 
 ---
 
-# 📺 Salida HLS
-
-Los streams se generan en:
-
-```bash
-storage/hls/<channelId>/
-```
-
-Ejemplo:
-
-```bash
-storage/hls/69d1063821d24bf44cb9b8a3/index.m3u8
-```
-
-Acceso público:
+## 📺 HLS
 
 ```http
-http://IP:PORT/hls/<channelId>/index.m3u8
+GET /hls/:channelId/index.m3u8
 ```
 
 ---
 
-# ⚠️ Consideraciones importantes
+## 📊 Canales activos
 
-## 🔴 node_modules
+```http
+GET /channels/active
+```
 
-No se sube al repo.
+---
 
-## 🔴 .env
+## 🔎 Estado de canal
 
-No se sube al repo (datos sensibles).
+```http
+GET /channels/:channelId/status
+```
 
-## 🔴 storage/hls
+---
 
-No se versiona:
+## 🛑 Detener canal
 
-* archivos temporales
-* alto consumo de espacio
+```http
+POST /channels/:channelId/stop
+```
+
+---
+
+## 🖥️ Panel técnico
+
+```http
+GET /panel
+```
+
+👉 Panel web local sin dependencias externas
+👉 Permite:
+
+* ver estado del servidor
+* ver canales activos
+* detener canales
+* auto-refresh
+
+---
+
+# 🧠 Lógica de funcionamiento
+
+## 🔁 Flujo de streaming
+
+1. Cliente pide `/stream/:id`
+2. Origin consulta Mongo
+3. Resuelve mejor variante HLS
+4. Inicia FFmpeg (si no existe)
+5. Genera HLS local
+6. Redirige al playlist
+
+---
+
+## ♻️ Reutilización de canales
+
+Si un canal ya está activo:
+
+* no se reinicia FFmpeg
+* se reutiliza el proceso existente
+
+---
+
+## 🧹 Auto cierre de canales
+
+Controlado por:
+
+```env
+CHANNEL_IDLE_TIMEOUT_MS
+```
+
+### Opciones:
+
+| Valor | Comportamiento    |
+| ----- | ----------------- |
+| 0     | desactivado       |
+| >0    | cierre automático |
+
+Ejemplo:
+
+```env
+CHANNEL_IDLE_TIMEOUT_MS=1800000
+```
+
+(30 minutos)
+
+---
+
+## 🎯 Selección de calidad
+
+El Origin:
+
+* detecta si la URL es master playlist
+* analiza variantes HLS
+* selecciona la de mayor bitrate
+
+---
+
+# 📂 Estructura de carpetas
+
+```text
+src/
+  controllers/
+  services/
+  routes/
+  models/
+  config/
+  lib/
+
+storage/
+  hls/
+```
+
+---
+
+# ⚠️ Importante
+
+## ❌ No subir a Git
+
+```txt
+node_modules/
+.env
+storage/hls/
+dist/
+```
 
 ---
 
 # 📈 Estado actual
 
-✔ Resolución de canales desde Mongo
-✔ Selección automática de mejor calidad HLS
-✔ Generación HLS con FFmpeg
-✔ Reutilización de procesos activos
-✔ Servidor funcional
+✔ Streaming HLS funcionando
+✔ Resolución automática de calidad
+✔ FFmpeg estable
+✔ Reutilización de procesos
+✔ Panel técnico funcional
+✔ Control manual de canales
+✔ Preparado para Edge
 
 ---
 
-# 🚀 Próximas mejoras
+# 🚀 Próximos pasos
 
-* Timeout automático de canales
-* Conteo de viewers
-* Panel técnico local
-* Integración con nodos Edge
-* Balanceo de carga
-* Dockerización
-
----
-
-# 🧠 Notas técnicas
-
-* FFmpeg trabaja en modo **copy** (sin transcodificar)
-* El Origin actúa como **relay inteligente**
-* La selección de calidad se realiza antes del procesamiento
+* Edge IPTV (caché local)
+* balanceo de carga
+* viewers en tiempo real
+* panel avanzado
+* dockerización
 
 ---
 
 # 👨‍💻 Autor
 
-Proyecto desarrollado por Diego 🚀
+Desarrollado por Diego 🚀
